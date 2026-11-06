@@ -19,9 +19,14 @@ def remove_workflow():
     if st.session_state.workflow_count > 1:
         st.session_state.workflow_count -= 1
 
-# ----------------- SIDEBAR NAVIGATION -----------------
-st.sidebar.title("Navigation")
-app_mode = st.sidebar.radio("Go to:", ["Client Questionnaire", "Admin Dashboard"])
+# ----------------- SMART MODE SWITCH (HIDDEN ADMIN) -----------------
+query_params = st.query_params
+is_admin_url = query_params.get("admin") == "true"
+app_mode = "Client Questionnaire"
+
+if is_admin_url:
+    st.sidebar.title("Management")
+    app_mode = st.sidebar.radio("Mode:", ["Client Questionnaire", "Admin Dashboard"])
 
 # ----------------- VIEW 1: CLIENT QUESTIONNAIRE -----------------
 if app_mode == "Client Questionnaire":
@@ -55,12 +60,8 @@ if app_mode == "Client Questionnaire":
             batch_process = st.selectbox("Do you often need to process batches of 8-32 or 96 samples at once?", ["Yes, regularly", "Occasionally", "Rarely", "Never"])
             
         with col_b:
-            challenges = st.multiselect(
-                "What challenges or issues are you experiencing? (Select all that apply)", 
-                ["Low yield", "Poor purity", "RNA degradation", "Long processing time", "Difficult operation", "Poor reproducibility", "Column clogging", "High cost", "Automation compatibility issues", "Other"]
-            )
+            challenges = st.multiselect("What challenges or issues are you experiencing? (Select all that apply)", ["Low yield", "Poor purity", "RNA degradation", "Long processing time", "Difficult operation", "Poor reproducibility", "Column clogging", "High cost", "Automation compatibility issues", "Other"])
             challenges_other = st.text_input("Specify other challenges (if any):")
-            
             pref_instrument = st.selectbox("Would you prefer a 32-channel (VNP-32P) or a 96-channel instrument (VNP-96P)?", ["32-channel", "96-channel", "Not sure yet depends on use case"])
 
         st.markdown("---")
@@ -71,7 +72,6 @@ if app_mode == "Client Questionnaire":
 
         workflows_data = []
 
-        # Dynamically render workflow blocks based on state count
         for i in range(st.session_state.workflow_count):
             st.markdown(f"### 🔹 Workflow {i+1}")
             
@@ -100,49 +100,37 @@ if app_mode == "Client Questionnaire":
                 "Downstream": ", ".join(downstream), "QC": ", ".join(qc_method),
                 "Requirements": ", ".join(requirements), "Req_Details": req_detail
             })
-            
             st.markdown("---")
 
-        # Submit Action inside form
         submit_btn = st.form_submit_button("🚀 Submit Technical Questionnaire", type="primary")
         
         if submit_btn:
             if not full_name or not company_name or not email_address:
                 st.error("⚠️ Please fill in all required Contact Information marked with *.")
             else:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                records_to_save = []
-                
-                final_challenges = ", ".join(challenges)
-                if challenges_other:
-                    final_challenges += f" (Other: {challenges_other})"
-                    
-                final_method = current_method
-                if method_detail:
-                    final_method += f" - {method_detail}"
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                rec = []
+                ch = ", ".join(challenges) + (f" (Other: {challenges_other})" if challenges_other else "")
+                meth = current_method + (f" - {method_detail}" if method_detail else "")
                 
                 for wf in workflows_data:
-                    records_to_save.append({
-                        "Timestamp": timestamp, "Full_Name": full_name, "Job_Title": job_title,
+                    rec.append({
+                        "Timestamp": ts, "Full_Name": full_name, "Job_Title": job_title,
                         "Company": company_name, "Department": department, "Email": email_address,
-                        "Current_Method": final_method, "Challenges": final_challenges,
-                        "Samples_Per_Month": samples_per_month, "Batch_Processing": batch_process,
-                        "Instrument_Preference": pref_instrument, "Workflow_No": wf["Workflow"],
-                        "Target_NA": wf["Target"], "Sample_Type": wf["Sample_Type"],
+                        "Current_Method": meth, "Challenges": ch, "Samples_Per_Month": samples_per_month,
+                        "Batch_Processing": batch_process, "Instrument_Preference": pref_instrument,
+                        "Workflow_No": wf["Workflow"], "Target_NA": wf["Target"], "Sample_Type": wf["Sample_Type"],
                         "Sample_Detail": wf["Sample_Detail"], "Sample_Condition": wf["Condition"],
                         "Condition_Detail": wf["Condition_Detail"], "Input_Amount": wf["Input"],
                         "Downstream_Apps": wf["Downstream"], "QC_Method": wf["QC"],
                         "Requirements": wf["Requirements"], "Requirement_Details": wf["Req_Details"]
                     })
                 
-                df_new = pd.DataFrame(records_to_save)
-                has_file = os.path.exists(CSV_FILE)
-                df_new.to_csv(CSV_FILE, mode='a', header=not has_file, index=False)
-                
+                df_new = pd.DataFrame(rec)
+                df_new.to_csv(CSV_FILE, mode='a', header=not os.path.exists(CSV_FILE), index=False)
                 st.success(f"✅ Thank you, {full_name}! Your questionnaire has been successfully submitted.")
                 st.balloons()
 
-    # Workflow dynamic control buttons placed directly right under Section 3 (Outside form)
     st.markdown("#### ⚙️ Need to add another extraction workflow?")
     b1, b2, _ = st.columns([1, 1, 3])
     with b1:
@@ -154,33 +142,21 @@ if app_mode == "Client Questionnaire":
 # ----------------- VIEW 2: ADMIN DASHBOARD -----------------
 elif app_mode == "Admin Dashboard":
     st.title("📊 Admin Dashboard - Collected Submissions")
-    
     pwd = st.text_input("Enter Admin Password to View Data", type="password")
     
     if pwd != ADMIN_PASSWORD:
-        if pwd != "":
-            st.error("Incorrect password.")
-        st.info("💡 Default password is set to: **123**")
+        if pwd != "": st.error("Incorrect password.")
+        st.info("💡 Protected Area. Please enter the administrator password.")
     else:
         st.success("Access granted!")
-        
         if os.path.exists(CSV_FILE):
             df_records = pd.read_csv(CSV_FILE)
             st.subheader(f"Total Submissions Records: {len(df_records)}")
-            
-            search_query = st.text_input("🔍 Search records by Company Name or Name:", "")
-            if search_query:
-                mask = df_records.apply(lambda r: r.astype(str).str.contains(search_query, case=False, na=False).any(), axis=1)
+            sq = st.text_input("🔍 Search records by Company Name or Name:", "")
+            if sq:
+                mask = df_records.apply(lambda r: r.astype(str).str.contains(sq, case=False, na=False).any(), axis=1)
                 df_records = df_records[mask]
-                
             st.dataframe(df_records, use_container_width=True)
-            
-            csv_bytes = df_records.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download All Records as CSV",
-                data=csv_bytes,
-                file_name="vazyme_client_questionnaires.csv",
-                mime="text/csv"
-            )
+            st.download_button("📥 Download All Records as CSV", df_records.to_csv(index=False).encode('utf-8'), "vazyme_client_questionnaires.csv", "text/csv")
         else:
-            st.info("ℹ️ No questionnaire records found yet. Try submitting one from the client view first!")
+            st.info("ℹ️ No questionnaire records found yet.")
